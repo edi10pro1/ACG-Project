@@ -1,0 +1,47 @@
+﻿          1 file(s) copied.
+          1 file(s) copied.
+  main.cpp
+  shader.cpp
+  Generating Code...
+main.obj : error LNK2019: unresolved external symbol __imp_glewInit referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwInit referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwTerminate referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwCreateWindow referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwWindowShouldClose referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwSetWindowShouldClose referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwSetFramebufferSizeCallback referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwPollEvents referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwGetKey referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwMakeContextCurrent referenced in function main
+main.obj : error LNK2019: unresolved external symbol glfwSwapBuffers referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewBindBuffer referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewBufferData referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewDeleteBuffers referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewGenBuffers referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewDeleteProgram referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewEnableVertexAttribArray referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewGetUniformLocation referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewUniform4fv referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewUniformMatrix4fv referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewUseProgram referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewVertexAttribPointer referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewBindVertexArray referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewDeleteVertexArrays referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp___glewGenVertexArrays referenced in function main
+main.obj : error LNK2019: unresolved external symbol __imp_glewExperimental referenced in function main
+shader.obj : error LNK2019: unresolved external symbol __imp___glewAttachShader referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewCompileShader referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewCreateProgram referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewCreateShader referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewDeleteShader referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewDetachShader referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewGetProgramInfoLog referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewGetProgramiv referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewGetShaderInfoLog referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewGetShaderiv referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewLinkProgram referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+shader.obj : error LNK2019: unresolved external symbol __imp___glewShaderSource referenced in function "unsigned int __cdecl LoadShaders(char const *,char const *)" (?LoadShaders@@YAIPEBD0@Z)
+dependente\freeglut\freeglut.lib : warning LNK4272: library machine type 'x86' conflicts with target machine type 'x64'
+dependente\glew\glew32.lib : warning LNK4272: library machine type 'x86' conflicts with target machine type 'x64'
+dependente\glfw\glfw3.lib : warning LNK4272: library machine type 'x86' conflicts with target machine type 'x64'
+C:\Users\alesi\Downloads\Lab4-20261021\Lab4_OpenGL\x64\Debug\ACG_Lab4.exe : fatal error LNK1120: 38 unresolved externals
