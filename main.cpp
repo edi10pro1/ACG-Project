@@ -283,7 +283,7 @@ int main(void)
     // Poziția și nivelul minim actualizat pentru noul sol la -0.9f (scală 0.25f)
     float dragonX = 0.0f;
     float dragonY = -0.85f;         
-    const float minGroundY = -0.85f; 
+    const float minGroundY = -0.865f; 
     const float flightSpeed = 1.0f;  
     const float fallSpeed = 0.5f;
     const float glideSpeed = 1.2f;
