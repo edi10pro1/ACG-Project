@@ -1,61 +1,33 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
+#include <cmath> // Necesar pentru sin()
 
-// Include GLEW
-#include "dependente\glew\glew.h"
+// Include bibliotecile adaptate în funcție de sistemul de operare
+#ifdef __APPLE__
+    #include <GL/glew.h>
+    #include <GLFW/glfw3.h>
+    #include <glm/glm.hpp>
+    #include <glm/gtc/matrix_transform.hpp>
+    #include <glm/gtc/type_ptr.hpp>
+#else
+    // Include GLEW (Windows)
+    #include "dependente\glew\glew.h"
 
-// Include GLFW
-#include "dependente\glfw\glfw3.h"
+    // Include GLFW (Windows)
+    #include "dependente\glfw\glfw3.h"
 
-// Include GLM
-#include "dependente\glm\glm.hpp"
-#include "dependente\glm\gtc\matrix_transform.hpp"
-#include "dependente\glm\gtc\type_ptr.hpp"
+    // Include GLM (Windows)
+    #include "dependente\glm\glm.hpp"
+    #include "dependente\glm\gtc\matrix_transform.hpp"
+    #include "dependente\glm\gtc\type_ptr.hpp"
+#endif
 
 #include "shader.hpp"
 
 // Variables
 GLFWwindow* window;
 const int width = 1024, height = 1024;
-
-/*
-// Variables for multiple squares and movement
-const int positionCount = 10;
-int currentPosition = 0;
-glm::vec3 squareOffset(0.0f, 0.0f, 0.0f);
-float zoomScale = 1.0f;
-*/
-
-/*
-// Handling cursor position
-void cursor_position_callback(GLFWwindow* window, double xpos, double ypos)
-{
-    std::cout << "The mouse cursor is: "
-              << xpos << " " << ypos << std::endl;
-}
-
-// Mouse button callback
-void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
-{
-    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS)
-    {
-        std::cout << "Left mouse button pressed" << std::endl;
-    }
-    else if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS)
-    {
-        std::cout << "Right mouse button pressed" << std::endl;
-    }
-    else if (button == GLFW_MOUSE_BUTTON_MIDDLE && action == GLFW_PRESS)
-    {
-        currentPosition = (currentPosition + 1) % positionCount;
-
-        std::cout << "Current position: "
-                  << currentPosition << std::endl;
-    }
-}
-*/
 
 // Window resizing callback
 void window_callback(GLFWwindow* window, int new_width, int new_height)
@@ -88,20 +60,6 @@ void window_callback(GLFWwindow* window, int new_width, int new_height)
         viewportHeight);
 }
 
-/*
-// Scroll callback for zoom
-void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
-{
-    zoomScale += (float)yoffset * 0.1f;
-
-    if (zoomScale < 0.2f)
-        zoomScale = 0.2f;
-
-    if (zoomScale > 3.0f)
-        zoomScale = 3.0f;
-}
-*/
-
 int main(void)
 {
     // Initialise GLFW
@@ -110,6 +68,14 @@ int main(void)
         fprintf(stderr, "Failed to initialize GLFW\n");
         return -1;
     }
+
+    // Setări obligatorii pe macOS pentru OpenGL Core Profile
+    #ifdef __APPLE__
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    #endif
 
     // Open a window and create its OpenGL context
     window = glfwCreateWindow(width, height, "Dragon", NULL, NULL);
@@ -136,7 +102,7 @@ int main(void)
     // Set viewport
     glViewport(0, 0, width, height);
 
-    // Dark blue background
+    // Dark blue background (cerul)
     glClearColor(0.0f, 0.0f, 0.4f, 1.0f);
 
     // Create and compile shaders
@@ -144,6 +110,36 @@ int main(void)
         "SimpleVertexShader.vertexshader",
         "SimpleFragmentShader.fragmentshader"
     );
+
+    // Ground vertices (coborât la -0.9f pentru un zoom out mai mare)
+    GLfloat groundVertices[] = {
+        -1.0f, -0.9f, 0.0f,  
+         1.0f, -0.9f, 0.0f, 
+         1.0f, -1.0f, 0.0f,  
+        -1.0f, -1.0f, 0.0f   
+    };
+
+    GLuint groundIndices[] = {
+        0, 1, 2,
+        2, 3, 0
+    };
+
+    GLuint groundVBO, groundVAO, groundIBO;
+
+    glGenVertexArrays(1, &groundVAO);
+    glGenBuffers(1, &groundVBO);
+    glGenBuffers(1, &groundIBO);
+
+    glBindVertexArray(groundVAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, groundVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, groundIBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(groundIndices), groundIndices, GL_STATIC_DRAW);
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
 
     // Dragon vertices
     GLfloat vertices[] = {
@@ -208,29 +204,35 @@ int main(void)
            -0.5f,  0.8f,  0.0f   // 49
     };
 
+    // Salvăm o copie a vârfurilor originale pentru animația capului/cozii
+    GLfloat initialVertices[sizeof(vertices) / sizeof(GLfloat)];
+    for(int i = 0; i < sizeof(vertices) / sizeof(GLfloat); i++) {
+        initialVertices[i] = vertices[i];
+    }
+
     // Dragon indices
     GLuint indices[] = {
-        // Body
+        // Body (9)
         1, 2, 3,
         3, 4, 1,
         0, 1, 4,
 
-        // Head
+        // Head (15)
         5, 6, 7,
         8, 3, 9,
         8, 9, 10,
         11, 12, 13,
         13, 14, 11,
 
-        // Leg 1
+        // Leg 1 (6)
         15, 16, 17,
         17, 1, 15,
 
-        // Leg 2
+        // Leg 2 (6)
         18, 19, 20,
         20, 21, 18,
 
-        // Tail
+        // Tail (27)
         22, 23, 0,
         24, 0, 23,
         23, 25, 24,
@@ -241,10 +243,10 @@ int main(void)
         30, 28, 29,
         31, 29, 32,
 
-        // Extra triangle for wings
+        // Triunghiuri extra în corpul principal (3)
         33, 4, 34,
 
-        // Wings
+        // Aripi animate (30)
         4, 37, 35,
         37, 38, 36,
         37, 39, 40,
@@ -257,7 +259,7 @@ int main(void)
         47, 48, 49
     };
 
-    // VAO, VBO, IBO
+    // VAO, VBO, IBO pentru dragon
     GLuint vbo, vao, ibo;
 
     glGenVertexArrays(1, &vao);
@@ -266,70 +268,43 @@ int main(void)
 
     glBindVertexArray(vao);
 
-    // Bind VBO
     glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(
-        GL_ARRAY_BUFFER,
-        sizeof(vertices),
-        vertices,
-        GL_STATIC_DRAW
-    );
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
-    // Bind IBO
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-    glBufferData(
-        GL_ELEMENT_ARRAY_BUFFER,
-        sizeof(indices),
-        indices,
-        GL_STATIC_DRAW
-    );
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
 
-    // Set attribute pointers
-    glVertexAttribPointer(
-        0,
-        3,
-        GL_FLOAT,
-        GL_FALSE,
-        3 * sizeof(float),
-        (void*)0
-    );
-
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
-
-    /*
-    // Original square positions
-    glm::vec3 positions[] = {
-        glm::vec3(0.0f,  0.0f,  0),
-        glm::vec3(0.2f,  0.5f, 0),
-        glm::vec3(-0.15f, -0.22f, 0),
-        glm::vec3(-0.38f, -0.2f, 0),
-        glm::vec3(0.24f, -0.4f, 0),
-        glm::vec3(-0.17f,  0.3f, 0),
-        glm::vec3(0.23f, -0.2f, 0),
-        glm::vec3(0.15f,  0.2f, 0),
-        glm::vec3(0.15f,  0.7f, 0),
-        glm::vec3(-0.13f,  0.1f, 0)
-    };
-    */
 
     // Window resize callback
     glfwSetFramebufferSizeCallback(window, window_callback);
 
-    /*
-    // Original callbacks
-    glfwSetCursorPosCallback(window, cursor_position_callback);
-    glfwSetMouseButtonCallback(window, mouse_button_callback);
-    glfwSetScrollCallback(window, scroll_callback);
+    // Poziția și nivelul minim actualizat pentru noul sol la -0.9f (scală 0.25f)
+    float dragonX = 0.0f;
+    float dragonY = -0.85f;         
+    const float minGroundY = -0.85f; 
+    const float flightSpeed = 1.0f;  
+    const float fallSpeed = 0.5f;
+    const float glideSpeed = 1.2f;
 
-    const float rotationSpeed = 90.0f;
-    const float movementSpeed = 0.75f;
+    // Unghiul dragonului
+    float dragonAngle = 0.0f;
+
+    // Controlul aripilor
+    float wingFlapSpeed = 5.0f;
+    float wingPhase = 0.0f; 
+
     float lastTime = (float)glfwGetTime();
-    */
 
     // Rendering loop
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
+
+        float currentTime = (float)glfwGetTime();
+        float deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
 
         // Close window with ESC
         if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
@@ -337,136 +312,162 @@ int main(void)
             glfwSetWindowShouldClose(window, true);
         }
 
-        /*
-        // Original movement and rotation controls
-        float currentTime = (float)glfwGetTime();
-        float deltaTime = currentTime - lastTime;
-        lastTime = currentTime;
+        // Verificăm starea tastelor A, D și SPACE
+        bool isAPressed = (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
+        bool isDPressed = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
+        bool isSpacePressed = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
 
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-            squareOffset.y += movementSpeed * deltaTime;
-
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
-            squareOffset.y -= movementSpeed * deltaTime;
-
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-            squareOffset.x -= movementSpeed * deltaTime;
-
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-            squareOffset.x += movementSpeed * deltaTime;
-
-        bool leftButtonPressed =
-            glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
-
-        bool rightButtonPressed =
-            glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-
-        float rotationDirection = 0.0f;
-
-        if (leftButtonPressed)
-            rotationDirection += 1.0f;
-
-        if (rightButtonPressed)
-            rotationDirection -= 1.0f;
-
-        if (rotationDirection != 0.0f)
+        // Control direcție (A / D)
+        if (isAPressed)
         {
-            float rotationAngle =
-                rotationSpeed * deltaTime * rotationDirection;
-
-            trans = glm::rotate(
-                trans,
-                rotationAngle,
-                glm::vec3(0.0f, 0.0f, 1.0f));
+            dragonAngle = glm::radians(180.0f); // Stânga
         }
-        */
+        if (isDPressed)
+        {
+            dragonAngle = glm::radians(0.0f);   // Dreapta
+        }
 
-        // Clear the screen
+        // Control zbor și viteză aripi
+        float targetWingFlapSpeed = 5.0f; 
+
+        if (isSpacePressed)
+        {
+            dragonY += flightSpeed * deltaTime;
+            targetWingFlapSpeed = 20.0f; 
+        }
+        
+        if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
+        {
+            dragonY -= flightSpeed * deltaTime;
+            if (dragonY < minGroundY) {
+                dragonY = minGroundY; 
+            }
+        }
+        
+        if (dragonY > minGroundY)
+        {
+            dragonY -= fallSpeed * deltaTime;
+        }
+        else 
+        {
+            dragonY = minGroundY;
+        }
+
+        // Logica de deplasare orizontală
+        bool shouldMoveHorizontal = false;
+        if (dragonY > minGroundY)
+        {
+            if (!isSpacePressed)
+            {
+                shouldMoveHorizontal = true; 
+            }
+            else
+            {
+                if (isAPressed || isDPressed)
+                {
+                    shouldMoveHorizontal = true; 
+                }
+            }
+        }
+
+        if (shouldMoveHorizontal)
+        {
+            float moveDirection = cos(dragonAngle); 
+            dragonX += moveDirection * glideSpeed * deltaTime;
+
+            if (dragonX > 1.5f) dragonX = -1.5f;
+            if (dragonX < -1.5f) dragonX = 1.5f;
+        }
+
+        // Tranziție lină viteză aripi
+        float smoothingFactor = 6.0f;
+        wingFlapSpeed += (targetWingFlapSpeed - wingFlapSpeed) * smoothingFactor * deltaTime;
+        wingPhase += wingFlapSpeed * deltaTime; 
+
+        // ==========================================
+        // ANIMAȚIE CAP ȘI COADĂ
+        // ==========================================
+        for(int i = 0; i < sizeof(vertices) / sizeof(GLfloat); i++) {
+            vertices[i] = initialVertices[i];
+        }
+
+        // Cap
+        for (int i = 5; i <= 14; i++) {
+            float origY = initialVertices[i * 3 + 1];
+            float origX = initialVertices[i * 3];
+            if (origX > 0.6f) {
+                vertices[i * 3 + 1] = origY + sin(currentTime * 4.0f) * 0.03f;
+            }
+        }
+
+        // Amplitudine coadă
+        float tailAmplitude = 0.01f; 
+        if (dragonY > minGroundY) {
+            tailAmplitude = 0.04f; 
+        }
+        if (isSpacePressed) {
+            tailAmplitude = 0.07f; 
+        }
+
+        // Coadă
+        for (int i = 22; i <= 32; i++) {
+            float origX = initialVertices[i * 3];     
+            float origY = initialVertices[i * 3 + 1];
+            float tailFactor = abs(origX + 0.12f); 
+            vertices[i * 3 + 1] = origY + sin(currentTime * 7.0f + origX * 4.0f) * tailAmplitude * tailFactor;
+        }
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
+        
+        // Clear screen
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Use shader
         glUseProgram(programID);
 
-        // Bind VAO
+        unsigned int transformLoc = glGetUniformLocation(programID, "transform");
+        unsigned int colorLoc = glGetUniformLocation(programID, "color");
+
+        // ==========================================
+        // 1. DESENARE SOL
+        // ==========================================
+        glBindVertexArray(groundVAO);
+
+        glm::vec4 groundColor(0.1f, 0.6f, 0.1f, 1.0f);
+        glUniform4fv(colorLoc, 1, glm::value_ptr(groundColor));
+
+        glm::mat4 groundModel = glm::mat4(1.0f);
+        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(groundModel));
+
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+        // ==========================================
+        // 2. DESENARE CORP DRAGON (Zoom out mărit la 0.25f)
+        // ==========================================
         glBindVertexArray(vao);
 
-        // Get uniform locations
-        unsigned int transformLoc =
-            glGetUniformLocation(programID, "transform");
+        glm::vec4 dragonColor(0.5f, 0.0f, 0.5f, 1.0f);
+        glUniform4fv(colorLoc, 1, glm::value_ptr(dragonColor));
 
-        unsigned int transformLoc2 =
-            glGetUniformLocation(programID, "color");
+        glm::mat4 dragonModel = glm::translate(glm::mat4(1.0f), glm::vec3(dragonX, dragonY, 0.0f));
+        dragonModel = glm::rotate(dragonModel, dragonAngle, glm::vec3(0.0f, 1.0f, 0.0f));
+        dragonModel = glm::scale(dragonModel, glm::vec3(0.25f, 0.25f, 1.0f)); // Zoom out mai mare (dragon mai mic)
 
-        // Dragon color
-        glm::vec4 color =
-            glm::vec4(0.5f, 0.0f, 0.5f, 1.0f);
+        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(dragonModel));
 
-        glUniform4fv(
-            transformLoc2,
-            1,
-            glm::value_ptr(color));
+        glDrawElements(GL_TRIANGLES, 66, GL_UNSIGNED_INT, (void*)0);
 
-        // Scale dragon to fit inside window
-        glm::mat4 model =
-            glm::scale(
-                glm::mat4(1.0f),
-                glm::vec3(0.8f, 0.8f, 1.0f));
+        // ==========================================
+        // 3. DESENARE ARIPI ANIMATE
+        // ==========================================
+        float flapAngle = sin(wingPhase) * 0.70f - 5.0f; 
 
-        glUniformMatrix4fv(
-            transformLoc,
-            1,
-            GL_FALSE,
-            glm::value_ptr(model));
+        glm::mat4 wingsModel = dragonModel; 
+        wingsModel = glm::rotate(wingsModel, flapAngle, glm::vec3(1.0f, 0.0f, 0.0f));
 
-        /*
-        // Original multiple-square rendering
-        glm::mat4 groupTransform =
-            glm::scale(
-                glm::mat4(1.0f),
-                glm::vec3(
-                    zoomScale,
-                    zoomScale,
-                    1.0f));
+        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(wingsModel));
+        glDrawElements(GL_TRIANGLES, 30, GL_UNSIGNED_INT, (void*)(66 * sizeof(GLuint)));
 
-        for (int i = 0; i < positionCount; i++)
-        {
-            int positionIndex = i;
-
-            if (i == 0)
-                positionIndex = currentPosition;
-
-            glm::vec3 position = positions[positionIndex];
-
-            if (i == 0)
-                position += squareOffset;
-
-            glm::mat4 localTransform =
-                glm::translate(
-                    glm::mat4(1.0f),
-                    position) * trans;
-
-            glm::mat4 model =
-                groupTransform * localTransform;
-
-            glUniformMatrix4fv(
-                transformLoc,
-                1,
-                GL_FALSE,
-                glm::value_ptr(model));
-
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        }
-        */
-
-        // Draw the dragon
-        glDrawElements(
-            GL_TRIANGLES,
-            sizeof(indices) / sizeof(indices[0]),
-            GL_UNSIGNED_INT,
-            0
-        );
-
-        // Swap buffers after drawing
         glfwSwapBuffers(window);
     }
 
@@ -474,6 +475,11 @@ int main(void)
     glDeleteBuffers(1, &vbo);
     glDeleteBuffers(1, &ibo);
     glDeleteVertexArrays(1, &vao);
+    
+    glDeleteBuffers(1, &groundVBO);
+    glDeleteBuffers(1, &groundIBO);
+    glDeleteVertexArrays(1, &groundVAO);
+
     glDeleteProgram(programID);
 
     glfwTerminate();
