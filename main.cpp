@@ -1,9 +1,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
-#include <cmath> // Necesar pentru sin() și abs()
+#include <string>
+#include <cmath>
+#include <algorithm>
+#include <random>
 
-// Include bibliotecile adaptate in functie de sistemul de operare
 #ifdef __APPLE__
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -11,14 +13,9 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #else
-    // Include GLEW (Windows)
 #define GLM_FORCE_RADIANS
 #include "dependente\glew\glew.h"
-
-// Include GLFW (Windows)
 #include "dependente\glfw\glfw3.h"
-
-// Include GLM (Windows)
 #include "dependente\glm\glm.hpp"
 #include "dependente\glm\gtc\matrix_transform.hpp"
 #include "dependente\glm\gtc\type_ptr.hpp"
@@ -26,660 +23,1350 @@
 
 #include "shader.hpp"
 
-// Variables
-GLFWwindow* window;
-const int width = 1024, height = 1024;
+const int WINDOW_WIDTH = 1024;
+const int WINDOW_HEIGHT = 1024;
 
-// targets
-struct StaticTarget {
-    float x;
-    float height;
-    bool hit;        
-	float fallAngle; // fall animation angle
-};
-const int NUM_TARGETS = 5;
-StaticTarget staticTargets[NUM_TARGETS];
+const float PI = 3.14159265359f;
+const float GROUND_Y = -0.9f;
 
+const int OBSTACLES_PER_ROUND = 20;
+const int MAX_PLAYER_FIREBALLS = 3;
+const int MAX_BOSS_FIREBALLS = 5;
 
-struct Fireball {
-    float x, y, vx;
-    bool active;
-};
-const int MAX_FIREBALLS = 3;
-Fireball fireballs[MAX_FIREBALLS];
+GLFWwindow* window = nullptr;
 
-// Window resizing callback
-void window_callback(GLFWwindow* window, int new_width, int new_height)
+float worldHalfWidth = 1.0f;
+float worldHalfHeight = 1.0f;
+
+glm::mat4 projection(1.0f);
+
+std::mt19937 rng(std::random_device{}());
+
+float randomFloat(float low, float high)
 {
-    if (new_width <= 0 || new_height <= 0)
-    {
-        return;
-    }
-
-    int viewportX = 0;
-    int viewportY = 0;
-    int viewportWidth = new_width;
-    int viewportHeight = new_height;
-
-    if (new_width > new_height)
-    {
-        viewportWidth = new_height;
-        viewportX = (new_width - viewportWidth) / 2;
-    }
-    else if (new_height > new_width)
-    {
-        viewportHeight = new_width;
-        viewportY = (new_height - viewportHeight) / 2;
-    }
-
-    glViewport(
-        viewportX,
-        viewportY,
-        viewportWidth,
-        viewportHeight);
+    std::uniform_real_distribution<float> dist(low, high);
+    return dist(rng);
 }
 
-int main(void)
+// WINDOW AND PROJECTION
+
+void updateProjection(int w, int h)
 {
-    // Initialise GLFW
+    if (w <= 0 || h <= 0)
+        return;
+
+    glViewport(0, 0, w, h);
+
+    float aspect = (float)w / (float)h;
+
+    worldHalfWidth = std::max(1.0f, aspect);
+    worldHalfHeight = std::max(1.0f, 1.0f / aspect);
+
+    projection = glm::ortho(
+        -worldHalfWidth, worldHalfWidth,
+        -worldHalfHeight, worldHalfHeight,
+        -1.0f, 1.0f
+    );
+}
+
+void window_callback(GLFWwindow*, int w, int h)
+{
+    updateProjection(w, h);
+}
+
+// MESH (to simplify the code a bit, we will use a struct to store mesh data)
+
+struct Mesh
+{
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint ebo = 0;
+    GLsizei count = 0;
+
+    void create(
+        const GLfloat vertices[],
+        size_t vertexCount,
+        const GLuint indices[],
+        size_t indexCount)
+    {
+        count = (GLsizei)indexCount;
+
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+        glGenBuffers(1, &ebo);
+
+        glBindVertexArray(vao);
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            vertexCount * sizeof(GLfloat),
+            vertices,
+            GL_STATIC_DRAW
+        );
+
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBufferData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            indexCount * sizeof(GLuint),
+            indices,
+            GL_STATIC_DRAW
+        );
+
+        glVertexAttribPointer(
+            0, 3, GL_FLOAT, GL_FALSE,
+            3 * sizeof(GLfloat), (void*)0
+        );
+
+        glEnableVertexAttribArray(0);
+
+        glBindVertexArray(0);
+    }
+
+    void destroy()
+    {
+        glDeleteBuffers(1, &vbo);
+        glDeleteBuffers(1, &ebo);
+        glDeleteVertexArrays(1, &vao);
+    }
+};
+
+// GAME OBJECTS (to work with them a bit easier, we will use structs)
+
+struct Obstacle
+{
+    float x = 0.0f;
+    float height = 0.0f;
+    bool hit = false;
+    float fallAngle = 0.0f;
+    bool counted = false;
+};
+
+struct Fireball
+{
+    glm::vec2 position = glm::vec2(0.0f);
+    glm::vec2 velocity = glm::vec2(0.0f);
+    bool active = false;
+};
+
+struct Dragon
+{
+    float x = -0.35f;
+    float y = -0.865f;
+    float direction = 1.0f;
+
+    int lives = 5;
+
+    float hitTimer = 0.0f;
+    float invulnerableTimer = 0.0f;
+    float shootCooldown = 0.0f;
+
+    float wingPhase = 0.0f;
+    float wingSpeed = 5.0f;
+};
+
+struct Boss
+{
+    bool active = false;
+    int lives = 5;
+
+    float x = 0.6f;
+    float y = 0.05f;
+
+    float time = 0.0f;
+    float shootTimer = 1.5f;
+    float hitFlashTimer = 0.0f;
+    float invulnerableTimer = 0.0f;
+};
+
+enum class GamePhase
+{
+    OBSTACLES,
+    BOSS,
+    GAME_OVER
+};
+
+Dragon dragon;
+Boss boss;
+
+GamePhase gamePhase = GamePhase::OBSTACLES;
+
+Obstacle obstacles[OBSTACLES_PER_ROUND];
+Fireball playerFireballs[MAX_PLAYER_FIREBALLS];
+Fireball bossFireballs[MAX_BOSS_FIREBALLS];
+
+int obstacleCount = 0;
+int obstaclesPassed = 0;
+int bossesDefeated = 0;
+
+// OPENGL OBJECTS
+
+Mesh dragonBodyMesh;
+Mesh dragonWingMesh;
+
+Mesh bossBodyMesh;
+Mesh bossWingMesh;
+
+Mesh quadMesh;
+Mesh fireMesh;
+
+GLuint programID;
+GLint transformLoc;
+GLint colorLoc;
+
+// DRAWING FUNCTION
+
+void draw(
+    const Mesh& mesh,
+    const glm::mat4& model,
+    const glm::vec4& color)
+{
+    glm::mat4 mvp = projection * model;
+
+    glUniformMatrix4fv(
+        transformLoc, 1, GL_FALSE,
+        glm::value_ptr(mvp)
+    );
+
+    glUniform4fv(
+        colorLoc, 1,
+        glm::value_ptr(color)
+    );
+
+    glBindVertexArray(mesh.vao);
+
+    glDrawElements(
+        GL_TRIANGLES,
+        mesh.count,
+        GL_UNSIGNED_INT,
+        nullptr
+    );
+}
+
+glm::mat4 translateScale(
+    float x, float y,
+    float sx, float sy)
+{
+    glm::mat4 model(1.0f);
+
+    model = glm::translate(
+        model,
+        glm::vec3(x, y, 0.0f)
+    );
+
+    return glm::scale(
+        model,
+        glm::vec3(sx, sy, 1.0f)
+    );
+}
+
+// PLAYER DRAGON - VERTICES AND INDICES
+
+GLfloat dragonVertices[] = {
+    -0.2f,-0.05f,0.0f,   // 0
+     0.0f,-0.05f,0.0f,   // 1
+     0.6f,-0.05f,0.0f,   // 2
+     0.6f, 0.1f,0.0f,    // 3
+     0.0f, 0.1f,0.0f,    // 4
+     0.6f,-0.1f,0.0f,    // 5
+     0.9f, 0.0f,0.0f,    // 6
+     0.6f, 0.2f,0.0f,    // 7
+     0.55f,0.1f,0.0f,    // 8
+     0.6f, 0.15f,0.0f,   // 9
+     0.5f, 0.2f,0.0f,    // 10
+     0.7f,-0.1f,0.0f,    // 11
+     0.85f,-0.1f,0.0f,   // 12
+     0.85f,-0.05f,0.0f,  // 13
+     0.7f,-0.05f,0.0f,   // 14
+     0.0f,-0.15f,0.0f,   // 15
+     0.1f,-0.15f,0.0f,   // 16
+     0.1f,-0.05f,0.0f,   // 17
+     0.3f,-0.15f,0.0f,   // 18
+     0.4f,-0.15f,0.0f,   // 19
+     0.4f,-0.05f,0.0f,   // 20
+     0.3f,-0.05f,0.0f,   // 21
+    -0.12f,0.0f,0.0f,    // 22
+    -0.2f, 0.0f,0.0f,    // 23
+    -0.4f,-0.05f,0.0f,   // 24
+    -0.4f, 0.0f,0.0f,    // 25
+    -0.6f,-0.2f,0.0f,    // 26
+    -0.6f,-0.15f,0.0f,   // 27
+    -0.8f,-0.2f,0.0f,    // 28
+    -0.8f,-0.15f,0.0f,   // 29
+    -1.0f,-0.2f,0.0f,    // 30
+    -0.9f,-0.175f,0.0f,  // 31
+    -0.9f, 0.0f,0.0f,    // 32
+    -0.1f, 0.025f,0.0f,  // 33
+    -0.1f, 0.2f,0.0f,    // 34
+     0.1f, 0.3f,0.0f,    // 35
+     0.0f, 0.4f,0.0f,    // 36
+     0.3f, 0.1f,0.0f,    // 37
+     0.3f, 0.4f,0.0f,    // 38
+     0.4f, 0.1f,0.0f,    // 39
+     0.3f, 0.2f,0.0f,    // 40
+     0.0f, 0.7f,0.0f,    // 41
+    -0.3f, 0.7f,0.0f,    // 42
+    -0.1f, 0.5f,0.0f,    // 43
+    -0.3f, 0.5f,0.0f,    // 44
+    -0.5f, 0.7f,0.0f,    // 45
+    -0.2f, 0.7f,0.0f,    // 46
+    -0.5f, 1.0f,0.0f,    // 47
+    -0.8f, 1.0f,0.0f,    // 48
+    -0.5f, 0.8f,0.0f     // 49
+};
+
+GLuint dragonBodyIndices[] = {
+    1,2,3, 
+    3,4,1, 
+    0,1,4,
+    5,6,7, 
+    8,3,9, 
+    8,9,10,
+    11,12,13, 
+    13,14,11,
+    15,16,17, 
+    17,1,15,
+    18,19,20,
+    20,21,18,
+    22,23,0, 
+    24,0,23,
+    23,25,24, 
+    25,27,26,
+    26,24,25, 
+    28,26,27,
+    27,29,28, 
+    30,28,29,
+    31,29,32,
+    33,4,34
+};
+
+GLuint dragonWingIndices[] = {
+    4,37,35,
+    37,38,36,
+    37,39,40,
+    36,38,41,
+    36,41,42,
+    44,36,43,
+    44,43,42,
+    45,44,42,
+    45,46,47,
+    47,48,49
+};
+
+// BOSS DRAGON - VERTICES
+
+GLfloat bossVertices[] = {
+    -0.8f,  0.6f, 0.0f,   // 0
+    -0.6f,  0.6f, 0.0f,   // 1
+    -0.6f,  0.7f, 0.0f,   // 2
+    -0.6f,  0.8f, 0.0f,   // 3
+    -0.5f,  0.8f, 0.0f,   // 4
+    -0.2f,  0.6f, 0.0f,   // 5
+     0.0f,  0.6f, 0.0f,   // 6
+
+    -0.8f,  0.1f, 0.0f,   // 7
+    -0.7f,  0.1f, 0.0f,   // 8
+    -0.2f,  0.1f, 0.0f,   // 9
+    -0.8f,  0.0f, 0.0f,   // 10
+    -0.7f,  0.0f, 0.0f,   // 11
+    -0.2f,  0.0f, 0.0f,   // 12
+
+     0.0f,  0.0f, 0.0f,   // 13
+     0.08f, 0.46f,0.0f,  // 14
+
+     0.12f,-0.1f, 0.0f,   // 15
+     -0.1f, -0.1f, 0.0f,   // 16
+     0.0f, -0.1f, 0.0f,   // 17
+
+     0.3f, -0.24f,0.0f,  // 18
+     0.4f, -0.3f, 0.0f,   // 19
+     0.2f, -0.3f, 0.0f,   // 20
+     0.3f, -0.3f, 0.0f,   // 21
+
+     0.5f,  0.8f, 0.0f,   // 22
+     0.43f, 0.4f, 0.0f,   // 23
+     0.8f,  0.5f, 0.0f,   // 24
+     0.4f,  0.0f, 0.0f,   // 25
+     0.7f, -0.4f, 0.0f,   // 26
+
+     0.4f, -0.4f, 0.0f,   // 27
+     0.4f, -0.7f, 0.0f,   // 28
+     0.1f, -0.9f, 0.0f,   // 29
+     0.32f,-0.83f,0.0f,  // 30
+     0.3f, -1.0f, 0.0f,   // 31
+
+     0.45f,-0.1f, 0.0f,   // 32
+     0.5f,  0.0f, 0.0f    // 33
+};
+
+GLuint bossBodyIndices[] = {
+    0, 7, 9,
+    0, 9, 5,
+    5, 9, 12,
+    5, 12, 6,
+    6, 12, 13,
+
+    0, 1, 3,
+    3, 2, 4,
+
+    7, 8, 11,
+    7, 11, 10,
+    8, 9, 12,
+    8, 12, 11,
+
+    13, 17, 15,
+
+    6, 14, 13,
+    14, 25, 13,
+
+    13, 25, 19,
+    13, 19, 18,
+
+    25, 33, 32,
+
+    25, 26, 19,
+
+    19, 26, 28,
+    19, 28, 29,
+
+    29, 30, 31
+};
+
+GLuint bossWingIndices[] = {
+    14, 22, 23,
+    22, 24, 23,
+    14, 23, 25
+};
+
+// SIMPLE SHAPES FOR OBSTACLES AND FIREBALLS
+GLfloat quadVertices[] = {
+    -0.5f,0.0f,0.0f,
+     0.5f,0.0f,0.0f,
+     0.5f,1.0f,0.0f,
+    -0.5f,1.0f,0.0f
+};
+
+GLuint quadIndices[] = {
+    0,1,2,
+    2,3,0
+};
+
+GLfloat fireVertices[] = {
+    -0.6f,-0.25f,0.0f,
+     0.5f, 0.0f,0.0f,
+    -0.6f, 0.25f,0.0f
+};
+
+GLuint fireIndices[] = {
+    0,1,2
+};
+
+// OBSTACLE SYSTEM
+
+void resetObstacles()
+{
+    obstacleCount = OBSTACLES_PER_ROUND;
+
+    for (int i = 0; i < obstacleCount; i++)
+    {
+        obstacles[i] = Obstacle();
+
+        obstacles[i].x =
+            worldHalfWidth + 0.8f + i * 0.65f;
+
+        obstacles[i].height =
+            randomFloat(0.2f, 0.6f);
+    }
+
+    obstaclesPassed = 0;
+    gamePhase = GamePhase::OBSTACLES;
+}
+
+// BOSS SYSTEM
+
+void spawnBoss()
+{
+    gamePhase = GamePhase::BOSS;
+    obstacleCount = 0;
+
+    boss = Boss();
+    boss.active = true;
+    boss.lives = 5;
+
+    boss.x = worldHalfWidth - 0.42f;
+    boss.y = 0.05f;
+
+    boss.shootTimer = randomFloat(1.0f, 2.5f);
+
+    std::cout << "BOSS APPEARED!\n";
+}
+
+void defeatBoss()
+{
+    boss.active = false;
+    bossesDefeated++;
+
+    std::cout << "BOSS DEFEATED!\n";
+
+    for (int i = 0; i < MAX_BOSS_FIREBALLS; i++)
+        bossFireballs[i].active = false;
+
+    resetObstacles();
+}
+
+// DAMAGE CALCULATION
+
+void damageDragon()
+{
+    if (dragon.lives <= 0 ||
+        dragon.invulnerableTimer > 0.0f)
+        return;
+
+    dragon.lives--;
+
+    dragon.hitTimer = 0.6f;
+    dragon.invulnerableTimer = 1.0f;
+
+    std::cout << "Dragon lives: "
+        << dragon.lives << "\n";
+
+    if (dragon.lives == 0)
+    {
+        gamePhase = GamePhase::GAME_OVER;
+        std::cout << "GAME OVER!\n";
+    }
+}
+
+void damageBoss()
+{
+    if (!boss.active ||
+        boss.invulnerableTimer > 0.0f)
+        return;
+
+    boss.lives--;
+
+    boss.hitFlashTimer = 0.35f;
+    boss.invulnerableTimer = 0.45f;
+
+    std::cout << "Boss lives: "
+        << boss.lives << "\n";
+
+    if (boss.lives <= 0)
+        defeatBoss();
+}
+
+// SHOOTING SYSTEM
+
+void shootPlayerFireball()
+{
+    if (dragon.shootCooldown > 0.0f)
+        return;
+
+    for (int i = 0; i < MAX_PLAYER_FIREBALLS; i++)
+    {
+        if (playerFireballs[i].active)
+            continue;
+
+        playerFireballs[i].active = true;
+
+        playerFireballs[i].position = glm::vec2(
+            dragon.x + dragon.direction * 0.20f,
+            dragon.y + 0.025f
+        );
+
+        playerFireballs[i].velocity = glm::vec2(
+            dragon.direction * 3.5f,
+            0.0f
+        );
+
+        dragon.shootCooldown = 0.45f;
+        break;
+    }
+}
+
+void shootBossFireball()
+{
+    for (int i = 0; i < MAX_BOSS_FIREBALLS; i++)
+    {
+        if (bossFireballs[i].active)
+            continue;
+
+        bossFireballs[i].position = glm::vec2(
+            boss.x - 0.24f,
+            boss.y + 0.08f
+        );
+
+        glm::vec2 target(
+            dragon.x,
+            dragon.y + 0.05f
+        );
+
+        glm::vec2 direction =
+            target - bossFireballs[i].position;
+
+        float length = glm::length(direction);
+
+        if (length > 0.001f)
+            direction /= length;
+        else
+            direction = glm::vec2(-1.0f, 0.0f);
+
+        bossFireballs[i].velocity = direction * 1.25f;
+        bossFireballs[i].active = true;
+
+        break;
+    }
+}
+
+// COLLISION
+
+bool overlaps(
+    float ax, float ay, float ar,
+    float bx, float by, float br)
+{
+    float dx = ax - bx;
+    float dy = ay - by;
+
+    float radius = ar + br;
+
+    return dx * dx + dy * dy < radius * radius;
+}
+
+// GAME UPDATE
+
+void updateGame(float dt)
+{
+    if (gamePhase == GamePhase::GAME_OVER)
+        return;
+
+    dragon.hitTimer =
+        std::max(0.0f, dragon.hitTimer - dt);
+
+    dragon.invulnerableTimer =
+        std::max(0.0f, dragon.invulnerableTimer - dt);
+
+    dragon.shootCooldown =
+        std::max(0.0f, dragon.shootCooldown - dt);
+
+    boss.hitFlashTimer =
+        std::max(0.0f, boss.hitFlashTimer - dt);
+
+    boss.invulnerableTimer =
+        std::max(0.0f, boss.invulnerableTimer - dt);
+
+    bool left =
+        glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
+
+    bool right =
+        glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+
+    bool fly =
+        glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+
+    bool descend =
+        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+
+    bool shoot =
+        glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+
+    if (left)
+        dragon.direction = -1.0f;
+
+    if (right)
+        dragon.direction = 1.0f;
+
+    if (shoot)
+        shootPlayerFireball();
+
+    // Vertical movement
+    if (fly)
+        dragon.y += 1.0f * dt;
+    else if (descend)
+        dragon.y -= 1.0f * dt;
+    else
+        dragon.y -= 0.5f * dt;
+
+    dragon.y = std::max(-0.865f, dragon.y);
+
+    dragon.y = std::min(
+        worldHalfHeight - 0.3f,
+        dragon.y
+    );
+
+    // Player wing animation
+    float targetSpeed = fly ? 20.0f : 5.0f;
+
+    dragon.wingSpeed +=
+        (targetSpeed - dragon.wingSpeed) *
+        std::min(1.0f, 6.0f * dt);
+
+    dragon.wingPhase += dragon.wingSpeed * dt;
+
+    // Side-scrolling
+    float horizontalSpeed = 0.0f;
+
+    if (dragon.y > -0.865f)
+    {
+        if (left || right || !fly)
+            horizontalSpeed = dragon.direction * 1.2f;
+    }
+
+    // Obstacles
+    if (gamePhase == GamePhase::OBSTACLES)
+    {
+        for (int i = 0; i < obstacleCount; i++)
+        {
+            obstacles[i].x -= horizontalSpeed * dt;
+
+            if (obstacles[i].hit)
+            {
+                obstacles[i].fallAngle -= 5.0f * dt;
+
+                obstacles[i].fallAngle =
+                    std::max(
+                        -PI / 2.0f,
+                        obstacles[i].fallAngle
+                    );
+            }
+
+            if (!obstacles[i].counted &&
+                obstacles[i].x < dragon.x - 0.25f)
+            {
+                obstacles[i].counted = true;
+                obstaclesPassed++;
+            }
+        }
+
+        for (int i = 0; i < obstacleCount; i++)
+        {
+            if (obstacles[i].hit)
+                continue;
+
+            float obstacleTop =
+                GROUND_Y + obstacles[i].height + 0.23f;
+
+            if (std::abs(obstacles[i].x - dragon.x) < 0.12f &&
+                dragon.y - 0.04f < obstacleTop &&
+                dragon.y + 0.12f > GROUND_Y)
+            {
+                dragon.y = std::max(
+                    dragon.y,
+                    obstacleTop + 0.04f
+                );
+            }
+        }
+
+        if (obstaclesPassed >= OBSTACLES_PER_ROUND)
+            spawnBoss();
+    }
+
+    // Boss movement and shooting
+    if (gamePhase == GamePhase::BOSS && boss.active)
+    {
+        boss.time += dt;
+
+        boss.x = worldHalfWidth - 0.42f;
+
+        boss.y =
+            0.05f + 0.15f * sin(boss.time * 1.8f);
+
+        boss.shootTimer -= dt;
+
+        if (boss.shootTimer <= 0.0f)
+        {
+            shootBossFireball();
+            boss.shootTimer = randomFloat(1.0f, 2.8f);
+        }
+    }
+
+    // Player fireballs
+    for (int i = 0; i < MAX_PLAYER_FIREBALLS; i++)
+    {
+        if (!playerFireballs[i].active)
+            continue;
+
+        playerFireballs[i].position +=
+            playerFireballs[i].velocity * dt;
+
+        if (std::abs(playerFireballs[i].position.x) >
+            worldHalfWidth + 0.5f)
+        {
+            playerFireballs[i].active = false;
+            continue;
+        }
+
+        if (gamePhase == GamePhase::OBSTACLES)
+        {
+            for (int j = 0; j < obstacleCount; j++)
+            {
+                if (obstacles[j].hit)
+                    continue;
+
+                float boardY =
+                    GROUND_Y + obstacles[j].height + 0.1f;
+
+                if (std::abs(
+                    playerFireballs[i].position.x -
+                    obstacles[j].x) < 0.09f &&
+                    std::abs(
+                        playerFireballs[i].position.y -
+                        boardY) < 0.15f)
+                {
+                    obstacles[j].hit = true;
+                    playerFireballs[i].active = false;
+                    break;
+                }
+            }
+        }
+        else if (gamePhase == GamePhase::BOSS && boss.active)
+        {
+            // Hitbox centered on the boss's body
+            if (overlaps(
+                playerFireballs[i].position.x,
+                playerFireballs[i].position.y,
+                0.025f,
+                boss.x - 0.15f,
+                boss.y + 0.12f,
+                0.25f))
+            {
+                playerFireballs[i].active = false;
+                damageBoss();
+            }
+        }
+    }
+
+    // Boss fireballs
+    for (int i = 0; i < MAX_BOSS_FIREBALLS; i++)
+    {
+        if (!bossFireballs[i].active)
+            continue;
+
+        bossFireballs[i].position +=
+            bossFireballs[i].velocity * dt;
+
+        if (std::abs(bossFireballs[i].position.x) >
+            worldHalfWidth + 0.5f ||
+            std::abs(bossFireballs[i].position.y) >
+            worldHalfHeight + 0.5f)
+        {
+            bossFireballs[i].active = false;
+            continue;
+        }
+
+        if (overlaps(
+            bossFireballs[i].position.x,
+            bossFireballs[i].position.y,
+            0.025f,
+            dragon.x,
+            dragon.y,
+            0.12f))
+        {
+            bossFireballs[i].active = false;
+            damageDragon();
+        }
+    }
+}
+
+// RENDER GAME
+
+void renderGame()
+{
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(programID);
+
+    // Ground
+    glm::mat4 groundModel = translateScale(
+        0.0f,
+        -worldHalfHeight,
+        2.0f * worldHalfWidth,
+        GROUND_Y + worldHalfHeight
+    );
+
+    draw(
+        quadMesh,
+        groundModel,
+        glm::vec4(0.1f, 0.6f, 0.1f, 1.0f)
+    );
+
+    // Player damage rotation
+    float hitAngle = 0.0f;
+
+    if (dragon.hitTimer > 0.0f)
+    {
+        float elapsed = 0.6f - dragon.hitTimer;
+        float fraction;
+
+        if (elapsed < 0.3f)
+            fraction = elapsed / 0.3f;
+        else
+            fraction = (0.6f - elapsed) / 0.3f;
+
+        fraction = std::max(
+            0.0f,
+            std::min(1.0f, fraction)
+        );
+
+        hitAngle =
+            glm::radians(90.0f) * fraction;
+    }
+
+    glm::mat4 dragonModel = glm::translate(
+        glm::mat4(1.0f),
+        glm::vec3(dragon.x, dragon.y, 0.0f)
+    );
+
+    dragonModel = glm::rotate(
+        dragonModel,
+        hitAngle,
+        glm::vec3(0.0f, 0.0f, 1.0f)
+    );
+
+    if (dragon.direction < 0.0f)
+    {
+        dragonModel = glm::rotate(
+            dragonModel,
+            PI,
+            glm::vec3(0.0f, 1.0f, 0.0f)
+        );
+    }
+
+    dragonModel = glm::scale(
+        dragonModel,
+        glm::vec3(0.25f, 0.25f, 1.0f)
+    );
+
+    bool showDragon = true;
+
+    if (dragon.invulnerableTimer > 0.0f)
+    {
+        showDragon =
+            ((int)(dragon.invulnerableTimer * 12.0f) % 2 == 0);
+    }
+
+    if (showDragon)
+    {
+        draw(
+            dragonBodyMesh,
+            dragonModel,
+            glm::vec4(0.07f, 0.07f, 0.14f, 1.0f)
+        );
+
+        glm::mat4 wingModel = glm::rotate(
+            dragonModel,
+            sin(dragon.wingPhase) * 0.7f,
+            glm::vec3(1.0f, 0.0f, 0.0f)
+        );
+
+        draw(
+            dragonWingMesh,
+            wingModel,
+            glm::vec4(0.07f, 0.07f, 0.14f, 1.0f)
+        );
+    }
+
+    // Obstacles
+    for (int i = 0; i < obstacleCount; i++)
+    {
+        if (obstacles[i].x < -worldHalfWidth - 0.5f ||
+            obstacles[i].x > worldHalfWidth + 0.5f)
+            continue;
+
+        glm::mat4 base = glm::translate(
+            glm::mat4(1.0f),
+            glm::vec3(
+                obstacles[i].x,
+                GROUND_Y,
+                0.0f
+            )
+        );
+
+        base = glm::rotate(
+            base,
+            obstacles[i].fallAngle,
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+
+        glm::mat4 pole = glm::scale(
+            base,
+            glm::vec3(
+                0.02f,
+                obstacles[i].height,
+                1.0f
+            )
+        );
+
+        draw(
+            quadMesh,
+            pole,
+            glm::vec4(0.18f, 0.09f, 0.1f, 1.0f)
+        );
+
+        glm::mat4 board = glm::translate(
+            base,
+            glm::vec3(
+                0.0f,
+                obstacles[i].height - 0.02f,
+                0.0f
+            )
+        );
+
+        board = glm::scale(
+            board,
+            glm::vec3(0.08f, 0.25f, 1.0f)
+        );
+
+        draw(
+            quadMesh,
+            board,
+            glm::vec4(0.43f, 0.25f, 0.11f, 1.0f)
+        );
+    }
+
+    if (boss.active)
+    {
+        bool showBoss = true;
+
+        if (boss.hitFlashTimer > 0.0f)
+        {
+            showBoss =
+                ((int)(boss.hitFlashTimer * 18.0f) % 2 == 0);
+        }
+
+        if (showBoss)
+        {
+            glm::mat4 bossModel = glm::translate(
+                glm::mat4(1.0f),
+                glm::vec3(boss.x, boss.y, 0.0f)
+            );
+
+            bossModel = glm::scale(
+                bossModel,
+                glm::vec3(0.42f, 0.42f, 1.0f)
+            );
+
+            // Boss body
+            draw(
+                bossBodyMesh,
+                bossModel,
+                glm::vec4(0.12f, 0.28f, 0.38f, 1.0f)
+            );
+
+            // Boss body - includes legs and tail
+            draw(
+                bossBodyMesh,
+                bossModel,
+                glm::vec4(0.12f, 0.28f, 0.38f, 1.0f)
+            );
+
+            // Boss wing animation - smooth flapping
+
+            float wingAngle =
+                0.22f * sin(boss.time * 5.0f);
+
+            // Start with the boss transformation
+            glm::mat4 bossWingModel = bossModel;
+
+            // Rotate around the wing's lower attachment point (0.4, 0)
+            bossWingModel = glm::translate(
+                bossWingModel,
+                glm::vec3(0.4f, 0.0f, 0.0f)
+            );
+
+            bossWingModel = glm::rotate(
+                bossWingModel,
+                wingAngle,
+                glm::vec3(1.0f, 0.0f, 0.0f)
+            );
+
+            bossWingModel = glm::translate(
+                bossWingModel,
+                glm::vec3(-0.4f, 0.0f, 0.0f)
+            );
+
+            // Draw the wing
+            draw(
+                bossWingMesh,
+                bossWingModel,
+                glm::vec4(0.12f, 0.28f, 0.38f, 1.0f)
+            );
+        }
+
+        // Boss lives
+        for (int i = 0; i < 5; i++)
+        {
+            glm::vec4 color =
+                i < boss.lives
+                ? glm::vec4(1.0f, 0.2f, 0.1f, 1.0f)
+                : glm::vec4(0.25f, 0.1f, 0.1f, 1.0f);
+
+            glm::mat4 life = translateScale(
+                worldHalfWidth - 0.6f + i * 0.11f,
+                worldHalfHeight - 0.12f,
+                0.08f,
+                0.06f
+            );
+
+            draw(quadMesh, life, color);
+        }
+    }
+
+    // Player fireballs
+    for (int i = 0; i < MAX_PLAYER_FIREBALLS; i++)
+    {
+        if (!playerFireballs[i].active)
+            continue;
+
+        glm::mat4 model = translateScale(
+            playerFireballs[i].position.x,
+            playerFireballs[i].position.y,
+            0.045f,
+            0.045f
+        );
+
+        if (playerFireballs[i].velocity.x < 0.0f)
+        {
+            model = glm::rotate(
+                model,
+                PI,
+                glm::vec3(0.0f, 0.0f, 1.0f)
+            );
+        }
+
+        draw(
+            fireMesh,
+            model,
+            glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)
+        );
+    }
+
+    // Boss fireballs
+    for (int i = 0; i < MAX_BOSS_FIREBALLS; i++)
+    {
+        if (!bossFireballs[i].active)
+            continue;
+
+        glm::mat4 model = translateScale(
+            bossFireballs[i].position.x,
+            bossFireballs[i].position.y,
+            0.065f,
+            0.065f
+        );
+
+        float angle = atan2(
+            bossFireballs[i].velocity.y,
+            bossFireballs[i].velocity.x
+        );
+
+        model = glm::rotate(
+            model,
+            angle,
+            glm::vec3(0.0f, 0.0f, 1.0f)
+        );
+
+        draw(
+            fireMesh,
+            model,
+            glm::vec4(1.0f, 0.55f, 0.0f, 1.0f)
+        );
+    }
+
+    // Player lives
+    for (int i = 0; i < 5; i++)
+    {
+        glm::vec4 color =
+            i < dragon.lives
+            ? glm::vec4(0.1f, 0.6f, 0.1f, 1.0f)
+            : glm::vec4(0.45f, 0.12f, 0.12f, 1.0f);
+
+        glm::mat4 life = translateScale(
+            -worldHalfWidth + 0.12f + i * 0.12f,
+            worldHalfHeight - 0.12f,
+            0.09f,
+            0.06f
+        );
+
+        draw(quadMesh, life, color);
+    }
+}
+
+int main()
+{
     if (!glfwInit())
     {
-        fprintf(stderr, "Failed to initialize GLFW\n");
+        std::cerr << "GLFW initialization failed\n";
         return -1;
     }
 
-#ifdef __APPLE__
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
-    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#endif
+    window = glfwCreateWindow(
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        "Dragon Game",
+        nullptr,
+        nullptr
+    );
 
-    // Open a window and create its OpenGL context
-    window = glfwCreateWindow(width, height, "Dragon", NULL, NULL);
-
-    if (window == NULL)
+    if (!window)
     {
-        fprintf(stderr, "Failed to open GLFW window.");
         glfwTerminate();
         return -1;
     }
 
     glfwMakeContextCurrent(window);
 
-    // Initialize GLEW
-    glewExperimental = true;
+    glewExperimental = GL_TRUE;
 
     if (glewInit() != GLEW_OK)
     {
-        fprintf(stderr, "Failed to initialize GLEW\n");
         glfwTerminate();
         return -1;
     }
 
-    // Set viewport
-    glViewport(0, 0, width, height);
+    int framebufferWidth;
+    int framebufferHeight;
 
-    // Dark blue background (cerul)
-    glClearColor(0.0f, 0.0f, 0.4f, 1.0f);
+    glfwGetFramebufferSize(
+        window,
+        &framebufferWidth,
+        &framebufferHeight
+    );
 
-    // Create and compile shaders
-    GLuint programID = LoadShaders(
+    updateProjection(
+        framebufferWidth,
+        framebufferHeight
+    );
+
+    glfwSetFramebufferSizeCallback(
+        window,
+        window_callback
+    );
+
+    glClearColor(
+        0.37f, 0.84f, 1.0f, 1.0f
+    );
+
+    programID = LoadShaders(
         "SimpleVertexShader.vertexshader",
         "SimpleFragmentShader.fragmentshader"
     );
 
-    // Ground vertices
-    GLfloat groundVertices[] = {
-        -1.0f, -0.9f, 0.0f,
-         1.0f, -0.9f, 0.0f,
-         1.0f, -1.0f, 0.0f,
-        -1.0f, -1.0f, 0.0f
-    };
-
-    GLuint groundIndices[] = {
-        0, 1, 2,
-        2, 3, 0
-    };
-
-    GLuint groundVBO, groundVAO, groundIBO;
-
-    glGenVertexArrays(1, &groundVAO);
-    glGenBuffers(1, &groundVBO);
-    glGenBuffers(1, &groundIBO);
-
-    glBindVertexArray(groundVAO);
-
-    glBindBuffer(GL_ARRAY_BUFFER, groundVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(groundVertices), groundVertices, GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, groundIBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(groundIndices), groundIndices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // Dragon vertices
-    GLfloat vertices[] = {
-        // Body
-        -0.2f, -0.05f, 0.0f,  // 0
-         0.0f, -0.05f, 0.0f,  // 1
-         0.6f, -0.05f, 0.0f,  // 2
-         0.6f,  0.1f,  0.0f,  // 3
-         0.0f,  0.1f,  0.0f,  // 4
-
-         // Head
-          0.6f, -0.1f,  0.0f,  // 5
-          0.9f,  0.0f,  0.0f,  // 6
-          0.6f,  0.2f,  0.0f,  // 7
-          0.55f, 0.1f,  0.0f,  // 8
-          0.6f,  0.15f, 0.0f,  // 9
-          0.5f,  0.2f,  0.0f,  // 10
-          0.7f, -0.1f,  0.0f,  // 11
-          0.85f,-0.1f,  0.0f,  // 12
-          0.85f,-0.05f, 0.0f,  // 13
-          0.7f, -0.05f, 0.0f,  // 14
-
-          // Legs
-           0.0f, -0.15f, 0.0f,  // 15
-           0.1f, -0.15f, 0.0f,  // 16
-           0.1f, -0.05f, 0.0f,  // 17
-           0.3f, -0.15f, 0.0f,  // 18
-           0.4f, -0.15f, 0.0f,  // 19
-           0.4f, -0.05f, 0.0f,  // 20
-           0.3f, -0.05f, 0.0f,  // 21
-
-           // Tail
-           -0.12f, 0.0f,  0.0f,  // 22
-           -0.2f,  0.0f,  0.0f,  // 23
-           -0.4f, -0.05f, 0.0f,  // 24
-           -0.4f,  0.0f,  0.0f,  // 25
-           -0.6f, -0.2f,  0.0f,  // 26
-           -0.6f, -0.15f, 0.0f,  // 27
-           -0.8f, -0.2f,  0.0f,  // 28
-           -0.8f, -0.15f, 0.0f,  // 29
-           -1.0f, -0.2f,  0.0f,  // 30
-           -0.9f, -0.175f,0.0f,  // 31
-           -0.9f,  0.0f,  0.0f,  // 32
-
-           // Wings
-           -0.1f,  0.025f,0.0f,  // 33
-           -0.1f,  0.2f,  0.0f,  // 34
-            0.1f,  0.3f,  0.0f,  // 35
-            0.0f,  0.4f,  0.0f,  // 36
-            0.3f,  0.1f,  0.0f,  // 37
-            0.3f,  0.4f,  0.0f,  // 38
-            0.4f,  0.1f,  0.0f,  // 39
-            0.3f,  0.2f,  0.0f,  // 40
-            0.0f,  0.7f,  0.0f,  // 41
-           -0.3f,  0.7f,  0.0f,  // 42
-           -0.1f,  0.5f,  0.0f,  // 43
-           -0.3f,  0.5f,  0.0f,  // 44
-           -0.5f,  0.7f,  0.0f,  // 45
-           -0.2f,  0.7f,  0.0f,  // 46
-           -0.5f,  1.0f,  0.0f,  // 47
-           -0.8f,  1.0f,  0.0f,  // 48
-           -0.5f,  0.8f,  0.0f   // 49
-    };
-
-    GLfloat initialVertices[sizeof(vertices) / sizeof(GLfloat)];
-    for (int i = 0; i < sizeof(vertices) / sizeof(GLfloat); i++) {
-        initialVertices[i] = vertices[i];
+    if (programID == 0)
+    {
+        glfwTerminate();
+        return -1;
     }
 
-    // Dragon indices
-    GLuint indices[] = {
-        // Body (9)
-        1, 2, 3,
-        3, 4, 1,
-        0, 1, 4,
+    transformLoc =
+        glGetUniformLocation(programID, "transform");
 
-        // Head (15)
-        5, 6, 7,
-        8, 3, 9,
-        8, 9, 10,
-        11, 12, 13,
-        13, 14, 11,
+    colorLoc =
+        glGetUniformLocation(programID, "color");
 
-        // Leg 1 (6)
-        15, 16, 17,
-        17, 1, 15,
+    // Player dragon
+    dragonBodyMesh.create(
+        dragonVertices,
+        sizeof(dragonVertices) / sizeof(GLfloat),
+        dragonBodyIndices,
+        sizeof(dragonBodyIndices) / sizeof(GLuint)
+    );
 
-        // Leg 2 (6)
-        18, 19, 20,
-        20, 21, 18,
+    dragonWingMesh.create(
+        dragonVertices,
+        sizeof(dragonVertices) / sizeof(GLfloat),
+        dragonWingIndices,
+        sizeof(dragonWingIndices) / sizeof(GLuint)
+    );
 
-        // Tail (27)
-        22, 23, 0,
-        24, 0, 23,
-        23, 25, 24,
-        25, 27, 26,
-        26, 24, 25,
-        28, 26, 27,
-        27, 29, 28,
-        30, 28, 29,
-        31, 29, 32,
+    // Boss body
+    bossBodyMesh.create(
+        bossVertices,
+        sizeof(bossVertices) / sizeof(GLfloat),
+        bossBodyIndices,
+        sizeof(bossBodyIndices) / sizeof(GLuint)
+    );
 
-        // Triunghiuri extra in corpul principal (3)
-        33, 4, 34,
+    // Boss: ONE wing
+    bossWingMesh.create(
+        bossVertices,
+        sizeof(bossVertices) / sizeof(GLfloat),
+        bossWingIndices,
+        sizeof(bossWingIndices) / sizeof(GLuint)
+    );
 
-        // Aripi animate (30)
-        4, 37, 35,
-        37, 38, 36,
-        37, 39, 40,
-        36, 38, 41,
-        36, 41, 42,
-        44, 36, 43,
-        44, 43, 42,
-        45, 44, 42,
-        45, 46, 47,
-        47, 48, 49
-    };
+    // Other meshes
+    quadMesh.create(
+        quadVertices,
+        sizeof(quadVertices) / sizeof(GLfloat),
+        quadIndices,
+        sizeof(quadIndices) / sizeof(GLuint)
+    );
 
-    // VAO, VBO, IBO pentru dragon
-    GLuint vbo, vao, ibo;
+    fireMesh.create(
+        fireVertices,
+        sizeof(fireVertices) / sizeof(GLfloat),
+        fireIndices,
+        sizeof(fireIndices) / sizeof(GLuint)
+    );
 
-    glGenVertexArrays(1, &vao);
-    glGenBuffers(1, &vbo);
-    glGenBuffers(1, &ibo);
-
-    glBindVertexArray(vao);
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-//target setup
-    GLfloat quadVertices[] = {
-        -0.5f, 0.0f, 0.0f, // left down
-         0.5f, 0.0f, 0.0f, // right down
-         0.5f, 1.0f, 0.0f, // right up
-        -0.5f, 1.0f, 0.0f  // left up
-    };
-    GLuint quadIndices[] = { 0, 1, 2, 2, 3, 0 };
-
-    GLuint quadVAO, quadVBO, quadIBO;
-    glGenVertexArrays(1, &quadVAO);
-    glGenBuffers(1, &quadVBO);
-    glGenBuffers(1, &quadIBO);
-
-    glBindVertexArray(quadVAO);
-    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(quadVertices), quadVertices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadIBO);
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quadIndices), quadIndices, GL_STATIC_DRAW);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-    glEnableVertexAttribArray(0);
-
-    // initialize 5 targets
-    for (int i = 0; i < NUM_TARGETS; i++) {
-        staticTargets[i].x = -3.0f + (6.0f * i / NUM_TARGETS) + ((rand() % 100) / 100.0f);
-        staticTargets[i].height = 0.2f + ((rand() % 40) / 100.0f);
-        staticTargets[i].hit = false;
-        staticTargets[i].fallAngle = 0.0f;
-    }
-
-    // Window resize callback
-    glfwSetFramebufferSizeCallback(window, window_callback);
-
-    float dragonX = 0.0f;
-    float dragonY = -0.85f;
-    const float minGroundY = -0.865f;
-    const float flightSpeed = 1.0f;
-    const float fallSpeed = 0.5f;
-    const float glideSpeed = 1.2f;
-
-    float dragonAngle = 0.0f;
-    float wingFlapSpeed = 5.0f;
-    float wingPhase = 0.0f;
+    resetObstacles();
 
     float lastTime = (float)glfwGetTime();
 
-    //ground height
-    const float GROUND_TOP = -0.9f;
-
-    // Rendering loop
     while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
 
-        // viewport resize
-        int winW, winH;
-        glfwGetFramebufferSize(window, &winW, &winH);
-        window_callback(window, winW, winH);
+        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+            glfwSetWindowShouldClose(window, true);
 
         float currentTime = (float)glfwGetTime();
+
         float deltaTime = currentTime - lastTime;
         lastTime = currentTime;
 
-        // Close window with ESC
-        if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+        deltaTime = std::max(
+            0.0f,
+            std::min(0.05f, deltaTime)
+        );
+
+        updateGame(deltaTime);
+        renderGame();
+
+        std::string title =
+            "Dragon: " + std::to_string(dragon.lives) +
+            "/5 | Obstacles: " +
+            std::to_string(obstaclesPassed) +
+            "/20 | Bosses defeated: " +
+            std::to_string(bossesDefeated);
+
+        if (boss.active)
         {
-            glfwSetWindowShouldClose(window, true);
+            title +=
+                " | Boss: " +
+                std::to_string(boss.lives) +
+                "/5";
         }
 
-        bool isAPressed = (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS);
-        bool isDPressed = (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS);
-        bool isSpacePressed = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
-        bool isShiftPressed = (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
+        if (gamePhase == GamePhase::GAME_OVER)
+            title += " | GAME OVER";
 
-        // Control directie (A / D)
-        if (isAPressed)
-        {
-            dragonAngle = glm::radians(180.0f);
-        }
-        if (isDPressed)
-        {
-            dragonAngle = glm::radians(0.0f);
-        }
-
-        // Timere trageri
-        static float shootCooldown = 0.0f;
-        static float jawOpenTimer = 0.0f;
-
-        if (shootCooldown > 0.0f) shootCooldown -= deltaTime;
-        if (jawOpenTimer > 0.0f) jawOpenTimer -= deltaTime;
-
-        // Trage un proiectil cu Shift
-        if (isShiftPressed && shootCooldown <= 0.0f) {
-            shootCooldown = 0.5f;
-            jawOpenTimer = 0.25f; // Maxilarul ramane deschis un sfert de secunda
-
-            for (int i = 0; i < MAX_FIREBALLS; i++) {
-                if (!fireballs[i].active) {
-                    fireballs[i].active = true;
-                    float direction = cos(dragonAngle);
-                    fireballs[i].x = dragonX + direction * 0.15f;
-                    fireballs[i].y = dragonY;
-                    fireballs[i].vx = direction * 3.5f;
-                    break;
-                }
-            }
-        }
-
-       //flight/collisions logic
-        float targetWingFlapSpeed = 5.0f;
-        float nextDragonY = dragonY;
-
-        if (isSpacePressed)
-        {
-            nextDragonY += flightSpeed * deltaTime;
-            targetWingFlapSpeed = 20.0f;
-        }
-        else if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS)
-        {
-            nextDragonY -= flightSpeed * deltaTime;
-        }
-        else
-        {
-            nextDragonY -= fallSpeed * deltaTime;
-        }
-
-        if (nextDragonY < minGroundY) nextDragonY = minGroundY;
-
-        // ceilling limit
-        if (nextDragonY > 0.7f) nextDragonY = 0.7f;
-
-        // vertical collision
-        for (int i = 0; i < NUM_TARGETS; i++) {
-            if (!staticTargets[i].hit) {
-                float tLeft = staticTargets[i].x - 0.06f;
-                float tRight = staticTargets[i].x + 0.06f;
-                float tTop = GROUND_TOP + staticTargets[i].height + 0.25f;
-
-                float dLeft = dragonX - 0.15f;
-                float dRight = dragonX + 0.15f;
-                float dBottom = nextDragonY - 0.05f;
-                float dTop = nextDragonY + 0.15f;
-
-                if (dRight > tLeft && dLeft < tRight && dTop > GROUND_TOP && dBottom < tTop) {
-                    if (nextDragonY < dragonY) {
-                        nextDragonY = tTop + 0.05f;
-                    }
-                    else {
-                        nextDragonY = dragonY;
-                    }
-                }
-            }
-        }
-
-        dragonY = nextDragonY;
-
-		//horizontal movement logic and x collisions
-        bool shouldMoveHorizontal = false;
-        if (dragonY > minGroundY)
-        {
-            if (!isSpacePressed) shouldMoveHorizontal = true;
-            else if (isAPressed || isDPressed) shouldMoveHorizontal = true;
-        }
-
-        if (shouldMoveHorizontal)
-        {
-            float moveDirection = cos(dragonAngle);
-            float speed = glideSpeed * deltaTime;
-            float nextDragonX = dragonX + moveDirection * speed;
-            bool collisionX = false;
-
-			// collision check for horizontal movement
-            for (int i = 0; i < NUM_TARGETS; i++) {
-                if (!staticTargets[i].hit) {
-                    float tLeft = staticTargets[i].x - 0.06f;
-                    float tRight = staticTargets[i].x + 0.06f;
-                    float tTop = GROUND_TOP + staticTargets[i].height + 0.25f;
-
-                    float dLeft = nextDragonX - 0.15f;
-                    float dRight = nextDragonX + 0.15f;
-                    float dBottom = dragonY - 0.04f;
-                    float dTop = dragonY + 0.15f;
-
-                    if (dRight > tLeft && dLeft < tRight && dTop > GROUND_TOP && dBottom < tTop) {
-                        collisionX = true;
-                        break;
-                    }
-                }
-            }
-
-            if (!collisionX) {
-                dragonX = nextDragonX;
-
-                float worldShift = 0.0f;
-                const float EDGE_LIMIT = 0.45f;
-
-                if (dragonX > EDGE_LIMIT) {
-                    worldShift = dragonX - EDGE_LIMIT;
-                    dragonX = EDGE_LIMIT;
-                }
-                else if (dragonX < -EDGE_LIMIT) {
-                    worldShift = dragonX - (-EDGE_LIMIT);
-                    dragonX = -EDGE_LIMIT;
-                }
-
-                if (worldShift != 0.0f) {
-                    for (int i = 0; i < NUM_TARGETS; i++) {
-                        staticTargets[i].x -= worldShift;
-
-                        if (staticTargets[i].x < -3.0f) {
-                            staticTargets[i].x += 6.0f;
-                            staticTargets[i].height = 0.2f + ((rand() % 40) / 100.0f);
-                            staticTargets[i].hit = false;
-                            staticTargets[i].fallAngle = 0.0f;
-                        }
-                        else if (staticTargets[i].x > 3.0f) {
-                            staticTargets[i].x -= 6.0f;
-                            staticTargets[i].height = 0.2f + ((rand() % 40) / 100.0f);
-                            staticTargets[i].hit = false;
-                            staticTargets[i].fallAngle = 0.0f;
-                        }
-                    }
-                }
-            }
-        }
-
-        //fireballs logic
-        for (int i = 0; i < MAX_FIREBALLS; i++) {
-            if (fireballs[i].active) {
-                fireballs[i].x += fireballs[i].vx * deltaTime;
-
-                if (fireballs[i].x > 1.5f || fireballs[i].x < -1.5f) {
-                    fireballs[i].active = false;
-                }
-
-                for (int j = 0; j < NUM_TARGETS; j++) {
-                    if (!staticTargets[j].hit) {
-                        if (std::abs(fireballs[i].x - staticTargets[j].x) < 0.1f) {
-
-                            float redBoardY = GROUND_TOP + staticTargets[j].height;
-
-                            if (fireballs[i].y >= redBoardY - 0.05f && fireballs[i].y <= redBoardY + 0.25f) {
-                                staticTargets[j].hit = true;
-                                fireballs[i].active = false;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        float smoothingFactor = 6.0f;
-        wingFlapSpeed += (targetWingFlapSpeed - wingFlapSpeed) * smoothingFactor * deltaTime;
-        wingPhase += wingFlapSpeed * deltaTime;
-
-        //animation head and tail
-        for (int i = 0; i < sizeof(vertices) / sizeof(GLfloat); i++) {
-            vertices[i] = initialVertices[i];
-        }
-
-        // Cap
-        for (int i = 5; i <= 14; i++) {
-            float origY = initialVertices[i * 3 + 1];
-            float origX = initialVertices[i * 3];
-            if (origX > 0.6f) {
-                vertices[i * 3 + 1] = origY + sin(currentTime * 4.0f) * 0.03f;
-            }
-        }
-
-        // Maxilar - Se deschide cand trage
-        if (jawOpenTimer > 0.0f) {
-            int jawIndices[] = { 11, 12, 13, 14 };
-            for (int idx : jawIndices) {
-                vertices[idx * 3 + 1] -= 0.06f;
-            }
-        }
-
-        // Amplitudine coada
-        float tailAmplitude = 0.01f;
-        if (dragonY > minGroundY) {
-            tailAmplitude = 0.04f;
-        }
-        if (isSpacePressed) {
-            tailAmplitude = 0.07f;
-        }
-
-        // Coada
-        for (int i = 22; i <= 32; i++) {
-            float origX = initialVertices[i * 3];
-            float origY = initialVertices[i * 3 + 1];
-            float tailFactor = std::abs(origX + 0.12f);
-            vertices[i * 3 + 1] = origY + sin(currentTime * 7.0f + origX * 4.0f) * tailAmplitude * tailFactor;
-        }
-
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_DYNAMIC_DRAW);
-
-        glClear(GL_COLOR_BUFFER_BIT);
-        glUseProgram(programID);
-
-        unsigned int transformLoc = glGetUniformLocation(programID, "transform");
-        unsigned int colorLoc = glGetUniformLocation(programID, "color");
-
-        // 1. DESENARE SOL
-        glBindVertexArray(groundVAO);
-        glm::vec4 groundColor(0.1f, 0.6f, 0.1f, 1.0f);
-        glUniform4fv(colorLoc, 1, glm::value_ptr(groundColor));
-        glm::mat4 groundModel = glm::mat4(1.0f);
-        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(groundModel));
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        // 2. DESENARE CORP DRAGON
-        glBindVertexArray(vao);
-        glm::vec4 dragonColor(0.5f, 0.0f, 0.5f, 1.0f);
-        glUniform4fv(colorLoc, 1, glm::value_ptr(dragonColor));
-        glm::mat4 dragonModel = glm::translate(glm::mat4(1.0f), glm::vec3(dragonX, dragonY, 0.0f));
-        dragonModel = glm::rotate(dragonModel, dragonAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-        dragonModel = glm::scale(dragonModel, glm::vec3(0.25f, 0.25f, 1.0f));
-        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(dragonModel));
-        glDrawElements(GL_TRIANGLES, 66, GL_UNSIGNED_INT, (void*)0);
-
-        // 3. DESENARE ARIPI ANIMATE
-        float flapAngle = sin(wingPhase) * 0.70f - 5.0f;
-        glm::mat4 wingsModel = dragonModel;
-        wingsModel = glm::rotate(wingsModel, flapAngle, glm::vec3(1.0f, 0.0f, 0.0f));
-        glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(wingsModel));
-        glDrawElements(GL_TRIANGLES, 30, GL_UNSIGNED_INT, (void*)(66 * sizeof(GLuint)));
-
-        // 4. DESENARE TINTE STATICE
-        glBindVertexArray(quadVAO);
-        for (int i = 0; i < NUM_TARGETS; i++) {
-            if (staticTargets[i].hit) {
-                staticTargets[i].fallAngle -= 5.0f * deltaTime;
-                if (staticTargets[i].fallAngle < -1.57f) { // Se oprește la 90 de grade 
-                    staticTargets[i].fallAngle = -1.57f;
-                }
-            }
-
-            glm::mat4 baseModel = glm::translate(glm::mat4(1.0f), glm::vec3(staticTargets[i].x, GROUND_TOP, 0.0f));
-            baseModel = glm::rotate(baseModel, staticTargets[i].fallAngle, glm::vec3(0.0f, 0.0f, 1.0f));
-
-            glm::vec4 poleColor(0.4f, 0.25f, 0.1f, 1.0f);
-            glUniform4fv(colorLoc, 1, glm::value_ptr(poleColor));
-            glm::mat4 poleModel = glm::scale(baseModel, glm::vec3(0.02f, staticTargets[i].height, 1.0f));
-            glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(poleModel));
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-            glm::vec4 boardColor(0.8f, 0.1f, 0.1f, 1.0f);
-            glUniform4fv(colorLoc, 1, glm::value_ptr(boardColor));
-
-            glm::mat4 boardModel = glm::translate(baseModel, glm::vec3(0.0f, staticTargets[i].height - 0.02f, 0.0f));
-
-            boardModel = glm::scale(boardModel, glm::vec3(0.08f, 0.25f, 1.0f));
-
-            glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(boardModel));
-            glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-        }
-
-        // 5. DESENARE FIREBALLS
-        glm::vec4 fireColor(1.0f, 0.5f, 0.0f, 1.0f);
-        glUniform4fv(colorLoc, 1, glm::value_ptr(fireColor));
-
-        for (int i = 0; i < MAX_FIREBALLS; i++) {
-            if (fireballs[i].active) {
-                glm::mat4 fireModel = glm::translate(glm::mat4(1.0f), glm::vec3(fireballs[i].x, fireballs[i].y, 0.0f));
-                fireModel = glm::scale(fireModel, glm::vec3(0.04f, 0.04f, 1.0f));
-                glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(fireModel));
-                glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-            }
-        }
+        glfwSetWindowTitle(
+            window,
+            title.c_str()
+        );
 
         glfwSwapBuffers(window);
     }
 
     // Cleanup
-    glDeleteBuffers(1, &vbo);
-    glDeleteBuffers(1, &ibo);
-    glDeleteVertexArrays(1, &vao);
+    dragonBodyMesh.destroy();
+    dragonWingMesh.destroy();
 
-    glDeleteBuffers(1, &groundVBO);
-    glDeleteBuffers(1, &groundIBO);
-    glDeleteVertexArrays(1, &groundVAO);
+    bossBodyMesh.destroy();
+    bossWingMesh.destroy();
 
-    glDeleteBuffers(1, &quadVBO);
-    glDeleteBuffers(1, &quadIBO);
-    glDeleteVertexArrays(1, &quadVAO);
+    quadMesh.destroy();
+    fireMesh.destroy();
 
     glDeleteProgram(programID);
 

@@ -1,9 +1,9 @@
 {
   "Version": 1,
-  "WorkspaceRootPath": "C:\\Users\\codit\\Downloads\\ACG-Project-main\\ACG-Project-main\\",
+  "WorkspaceRootPath": "C:\\Users\\alesi\\OneDrive\\Documents\\GitHub\\ACG-Project\\",
   "Documents": [
     {
-      "AbsoluteMoniker": "D:0:0:{E8D7D48F-7AB1-4260-BCEC-8CC11D9FBC01}|lab_TGIP_1.vcxproj|C:\\Users\\codit\\Downloads\\ACG-Project-main\\ACG-Project-main\\main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
+      "AbsoluteMoniker": "D:0:0:{E8D7D48F-7AB1-4260-BCEC-8CC11D9FBC01}|lab_TGIP_1.vcxproj|C:\\Users\\alesi\\OneDrive\\Documents\\GitHub\\ACG-Project\\main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}",
       "RelativeMoniker": "D:0:0:{E8D7D48F-7AB1-4260-BCEC-8CC11D9FBC01}|lab_TGIP_1.vcxproj|solutionrelative:main.cpp||{D0E1A5C6-B359-4E41-9B60-3365922C2A22}"
     }
   ],
@@ -14,17 +14,29 @@
       "DocumentGroups": [
         {
           "DockedWidth": 200,
-          "SelectedChildIndex": 0,
+          "SelectedChildIndex": 3,
           "Children": [
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{3ae79031-e1bc-11d0-8f78-00a0c9110057}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{40ea2e6b-2121-4bb8-a43e-c83c04b51041}"
+            },
+            {
+              "$type": "Bookmark",
+              "Name": "ST:0:0:{1c64b9c2-e352-428e-a56d-0ace190b99a6}"
+            },
             {
               "$type": "Document",
               "DocumentIndex": 0,
               "Title": "main.cpp",
-              "DocumentMoniker": "C:\\Users\\codit\\Downloads\\ACG-Project-main\\ACG-Project-main\\main.cpp",
+              "DocumentMoniker": "C:\\Users\\alesi\\OneDrive\\Documents\\GitHub\\ACG-Project\\main.cpp",
               "RelativeDocumentMoniker": "main.cpp",
-              "ToolTip": "C:\\Users\\codit\\Downloads\\ACG-Project-main\\ACG-Project-main\\main.cpp",
+              "ToolTip": "C:\\Users\\alesi\\OneDrive\\Documents\\GitHub\\ACG-Project\\main.cpp",
               "RelativeToolTip": "main.cpp",
-              "ViewState": "AgIAAKcCAAAAAAAAAAAYwLUCAAAAAAAAAAAAAA==",
+              "ViewState": "AgIAADQBAAAAAAAAAAAAALABAAACAAAAAAAAAA==",
               "Icon": "ae27a6b0-e345-4288-96df-5eaf394ee369.000677|",
               "WhenOpened": "2026-10-29T10:20:26.986Z",
               "EditorCaption": ""
