@@ -5,6 +5,7 @@
 #include <cmath>
 #include <algorithm>
 #include <random>
+#include <fstream>
 
 #ifdef __APPLE__
 #include <GL/glew.h>
@@ -69,6 +70,25 @@ void updateProjection(int w, int h)
     );
 }
 
+// SCORE LOADING AND SAVING
+
+int loadHighScore() {
+    int highScore = 0;
+    std::ifstream file("highscore.txt");
+    
+    if (file.is_open()) {
+        file >> highScore; 
+        file.close();
+    } else {
+       // daca fisierul nu exista creaza unul
+        std::ofstream outFile("highscore.txt");
+        outFile << 0;
+        outFile.close();
+    }
+    
+    return highScore;
+}
+
 void window_callback(GLFWwindow*, int w, int h)
 {
     updateProjection(w, h);
@@ -102,7 +122,7 @@ struct Mesh
             GL_ARRAY_BUFFER,
             vertexCount * sizeof(GLfloat),
             vertices,
-            GL_STATIC_DRAW
+            GL_DYNAMIC_DRAW 
         );
 
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
@@ -121,6 +141,13 @@ struct Mesh
         glEnableVertexAttribArray(0);
 
         glBindVertexArray(0);
+    }
+
+    void updateVertices(const GLfloat vertices[], size_t vertexCount)
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferSubData(GL_ARRAY_BUFFER, 0, vertexCount * sizeof(GLfloat), vertices);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
     }
 
     void destroy()
@@ -198,6 +225,9 @@ Fireball bossFireballs[MAX_BOSS_FIREBALLS];
 int obstacleCount = 0;
 int obstaclesPassed = 0;
 int bossesDefeated = 0;
+int score = 0;
+
+bool highScore = false;
 
 // OPENGL OBJECTS
 
@@ -214,55 +244,9 @@ GLuint programID;
 GLint transformLoc;
 GLint colorLoc;
 
-// DRAWING FUNCTION
+// PLAYER DRAGON - VERTICES AND INDICES (Copie inițială pentru resetarea animației de vertebre)
 
-void draw(
-    const Mesh& mesh,
-    const glm::mat4& model,
-    const glm::vec4& color)
-{
-    glm::mat4 mvp = projection * model;
-
-    glUniformMatrix4fv(
-        transformLoc, 1, GL_FALSE,
-        glm::value_ptr(mvp)
-    );
-
-    glUniform4fv(
-        colorLoc, 1,
-        glm::value_ptr(color)
-    );
-
-    glBindVertexArray(mesh.vao);
-
-    glDrawElements(
-        GL_TRIANGLES,
-        mesh.count,
-        GL_UNSIGNED_INT,
-        nullptr
-    );
-}
-
-glm::mat4 translateScale(
-    float x, float y,
-    float sx, float sy)
-{
-    glm::mat4 model(1.0f);
-
-    model = glm::translate(
-        model,
-        glm::vec3(x, y, 0.0f)
-    );
-
-    return glm::scale(
-        model,
-        glm::vec3(sx, sy, 1.0f)
-    );
-}
-
-// PLAYER DRAGON - VERTICES AND INDICES
-
-GLfloat dragonVertices[] = {
+GLfloat initialDragonVertices[] = {
     -0.2f,-0.05f,0.0f,   // 0
      0.0f,-0.05f,0.0f,   // 1
      0.6f,-0.05f,0.0f,   // 2
@@ -314,6 +298,8 @@ GLfloat dragonVertices[] = {
     -0.8f, 1.0f,0.0f,    // 48
     -0.5f, 0.8f,0.0f     // 49
 };
+
+GLfloat currentDragonVertices[sizeof(initialDragonVertices) / sizeof(GLfloat)];
 
 GLuint dragonBodyIndices[] = {
     1,2,3, 
@@ -375,7 +361,7 @@ GLfloat bossVertices[] = {
      0.08f, 0.46f,0.0f,  // 14
 
      0.12f,-0.1f, 0.0f,   // 15
-     -0.1f, -0.1f, 0.0f,   // 16
+    -0.1f, -0.1f, 0.0f,   // 16
      0.0f, -0.1f, 0.0f,   // 17
 
      0.3f, -0.24f,0.0f,  // 18
@@ -472,10 +458,10 @@ void resetObstacles()
         obstacles[i] = Obstacle();
 
         obstacles[i].x =
-            worldHalfWidth + 0.8f + i * 0.65f;
+            worldHalfWidth + 0.8f + i * 1.2f;
 
         obstacles[i].height =
-            randomFloat(0.2f, 0.6f);
+            randomFloat(0.2f, 1.2f);
     }
 
     obstaclesPassed = 0;
@@ -611,7 +597,7 @@ void shootBossFireball()
         else
             direction = glm::vec2(-1.0f, 0.0f);
 
-        bossFireballs[i].velocity = direction * 1.25f;
+        bossFireballs[i].velocity = direction * 1.25f * ((float)(bossesDefeated / 4.0f) + 1.0f);
         bossFireballs[i].active = true;
 
         break;
@@ -630,6 +616,52 @@ bool overlaps(
     float radius = ar + br;
 
     return dx * dx + dy * dy < radius * radius;
+}
+
+// DRAWING FUNCTION
+
+void draw(
+    const Mesh& mesh,
+    const glm::mat4& model,
+    const glm::vec4& color)
+{
+    glm::mat4 mvp = projection * model;
+
+    glUniformMatrix4fv(
+        transformLoc, 1, GL_FALSE,
+        glm::value_ptr(mvp)
+    );
+
+    glUniform4fv(
+        colorLoc, 1,
+        glm::value_ptr(color)
+    );
+
+    glBindVertexArray(mesh.vao);
+
+    glDrawElements(
+        GL_TRIANGLES,
+        mesh.count,
+        GL_UNSIGNED_INT,
+        nullptr
+    );
+}
+
+glm::mat4 translateScale(
+    float x, float y,
+    float sx, float sy)
+{
+    glm::mat4 model(1.0f);
+
+    model = glm::translate(
+        model,
+        glm::vec3(x, y, 0.0f)
+    );
+
+    return glm::scale(
+        model,
+        glm::vec3(sx, sy, 1.0f)
+    );
 }
 
 // GAME UPDATE
@@ -703,13 +735,13 @@ void updateGame(float dt)
 
     dragon.wingPhase += dragon.wingSpeed * dt;
 
-    // Side-scrolling
+    // Side-scrolling (cu multiplicatorul tău bazat pe boși)
     float horizontalSpeed = 0.0f;
 
     if (dragon.y > -0.865f)
     {
-        if (left || right || !fly)
-            horizontalSpeed = dragon.direction * 1.2f;
+        if (left || right || fly || !fly)
+            horizontalSpeed = dragon.direction * 1.2f * ((float)bossesDefeated / 4.0f + 1);
     }
 
     // Obstacles
@@ -734,10 +766,13 @@ void updateGame(float dt)
                 obstacles[i].x < dragon.x - 0.25f)
             {
                 obstacles[i].counted = true;
+              
+                
                 obstaclesPassed++;
             }
         }
 
+        // Verificarea coliziunii dragonului cu obstacolele
         for (int i = 0; i < obstacleCount; i++)
         {
             if (obstacles[i].hit)
@@ -750,10 +785,14 @@ void updateGame(float dt)
                 dragon.y - 0.04f < obstacleTop &&
                 dragon.y + 0.12f > GROUND_Y)
             {
-                dragon.y = std::max(
-                    dragon.y,
-                    obstacleTop + 0.04f
-                );
+                // 1. Scade viața dragonului și activează efectul de hit/invulnerabilitate
+                damageDragon();
+
+                // 2. Dă-l înapoi pe axa X (recul)
+                dragon.x -= dragon.direction * 0.15f;
+
+                // 3. Marchează obstacolul ca lovit (va cădea/prăbuși)
+                obstacles[i].hit = true;
             }
         }
 
@@ -814,7 +853,19 @@ void updateGame(float dt)
                         boardY) < 0.15f)
                 {
                     obstacles[j].hit = true;
+
+                    
                     playerFireballs[i].active = false;
+
+                    score += 1;
+                    if (score > loadHighScore()) {
+                        std::ofstream outFile("highscore.txt");
+                        if (outFile.is_open()) {
+                            highScore = true;
+                            outFile << score;
+                            outFile.close();
+                        }
+                    }
                     break;
                 }
             }
@@ -870,8 +921,79 @@ void updateGame(float dt)
 
 // RENDER GAME
 
+void resetGame()
+{
+   
+    dragon.lives = 5;
+    dragon.x = -0.35f;
+    dragon.y = -0.865f;
+    dragon.direction = 1.0f;
+    dragon.hitTimer = 0.0f;
+    dragon.invulnerableTimer = 0.0f;
+    dragon.shootCooldown = 0.0f;
+    highScore = false;
+
+  
+    score = 0;
+    obstaclesPassed = 0;
+    bossesDefeated = 0;
+
+  
+    boss.active = false;
+    for (int i = 0; i < MAX_BOSS_FIREBALLS; i++)
+        bossFireballs[i].active = false;
+
+    
+    for (int i = 0; i < MAX_PLAYER_FIREBALLS; i++)
+        playerFireballs[i].active = false;
+
+
+    resetObstacles();
+    
+    std::cout << "The game restarted!\n";
+}
+
 void renderGame()
 {
+    // ==========================================
+    // ANIMAȚIE CAP ȘI COADĂ (Vertebre)
+    // ==========================================
+    for(size_t i = 0; i < sizeof(initialDragonVertices) / sizeof(GLfloat); i++) {
+        currentDragonVertices[i] = initialDragonVertices[i];
+    }
+
+    float currentTime = (float)glfwGetTime();
+    bool isSpacePressed = (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS);
+
+  // HEAAD
+    for (int i = 5; i <= 14; i++) {
+        float origY = initialDragonVertices[i * 3 + 1];
+        float origX = initialDragonVertices[i * 3];
+        if (origX > 0.6f) {
+            currentDragonVertices[i * 3 + 1] = origY + sin(currentTime * 4.0f) * 0.03f;
+        }
+    }
+
+   // TAIL
+    float tailAmplitude = 0.01f; 
+    if (dragon.y > GROUND_Y + 0.035f) {
+        tailAmplitude = 0.04f; 
+    }
+    if (isSpacePressed) {
+        tailAmplitude = 0.07f; 
+    }
+
+    
+    for (int i = 22; i <= 32; i++) {
+        float origX = initialDragonVertices[i * 3];     
+        float origY = initialDragonVertices[i * 3 + 1];
+        float tailFactor = std::abs(origX + 0.12f); 
+        currentDragonVertices[i * 3 + 1] = origY + sin(currentTime * 7.0f + origX * 4.0f) * tailAmplitude * tailFactor;
+    }
+
+    // VBO UPDATE
+    dragonBodyMesh.updateVertices(currentDragonVertices, sizeof(currentDragonVertices) / sizeof(GLfloat));
+
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(programID);
 
@@ -946,16 +1068,30 @@ void renderGame()
 
     if (showDragon)
     {
+        // BODY
         draw(
             dragonBodyMesh,
             dragonModel,
             glm::vec4(0.07f, 0.07f, 0.14f, 1.0f)
         );
 
-        glm::mat4 wingModel = glm::rotate(
+        // 2. WING ANIMATION - smooth flapping
+        float dynamicWingAngle = sin(dragon.wingPhase) * 0.70f - 5.0f;
+
+        glm::mat4 wingModel = glm::translate(
             dragonModel,
-            sin(dragon.wingPhase) * 0.7f,
+            glm::vec3(-0.1f, 0.1f, 0.0f)
+        );
+
+        wingModel = glm::rotate(
+            wingModel,
+            dynamicWingAngle,
             glm::vec3(1.0f, 0.0f, 0.0f)
+        );
+
+        wingModel = glm::translate(
+            wingModel,
+            glm::vec3(0.1f, -0.1f, 0.0f)
         );
 
         draw(
@@ -1052,22 +1188,12 @@ void renderGame()
                 glm::vec4(0.12f, 0.28f, 0.38f, 1.0f)
             );
 
-            // Boss body - includes legs and tail
-            draw(
-                bossBodyMesh,
-                bossModel,
-                glm::vec4(0.12f, 0.28f, 0.38f, 1.0f)
-            );
-
             // Boss wing animation - smooth flapping
-
             float wingAngle =
                 0.22f * sin(boss.time * 5.0f);
 
-            // Start with the boss transformation
             glm::mat4 bossWingModel = bossModel;
 
-            // Rotate around the wing's lower attachment point (0.4, 0)
             bossWingModel = glm::translate(
                 bossWingModel,
                 glm::vec3(0.4f, 0.0f, 0.0f)
@@ -1084,7 +1210,6 @@ void renderGame()
                 glm::vec3(-0.4f, 0.0f, 0.0f)
             );
 
-            // Draw the wing
             draw(
                 bossWingMesh,
                 bossWingModel,
@@ -1198,6 +1323,14 @@ int main()
         return -1;
     }
 
+    // --- HINT-URI ADAUGATE PENTRU OPENGL 4.1 PE MACOS ---
+    #ifdef __APPLE__
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 1);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    #endif
+
     window = glfwCreateWindow(
         WINDOW_WIDTH,
         WINDOW_HEIGHT,
@@ -1208,16 +1341,21 @@ int main()
 
     if (!window)
     {
+        std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();
         return -1;
     }
 
     glfwMakeContextCurrent(window);
 
+    // Verificăm versiunea activă
+    std::cout << "OpenGL Version activă: " << glGetString(GL_VERSION) << std::endl;
+
     glewExperimental = GL_TRUE;
 
     if (glewInit() != GLEW_OK)
     {
+        std::cerr << "GLEW initialization failed\n";
         glfwTerminate();
         return -1;
     }
@@ -1262,17 +1400,22 @@ int main()
     colorLoc =
         glGetUniformLocation(programID, "color");
 
-    // Player dragon
+    // Copiem verteprele inițiale în array-ul curent
+    for(size_t i = 0; i < sizeof(initialDragonVertices) / sizeof(GLfloat); i++) {
+        currentDragonVertices[i] = initialDragonVertices[i];
+    }
+
+    // Player dragon (Folosim array-ul curent pentru creare)
     dragonBodyMesh.create(
-        dragonVertices,
-        sizeof(dragonVertices) / sizeof(GLfloat),
+        currentDragonVertices,
+        sizeof(currentDragonVertices) / sizeof(GLfloat),
         dragonBodyIndices,
         sizeof(dragonBodyIndices) / sizeof(GLuint)
     );
 
     dragonWingMesh.create(
-        dragonVertices,
-        sizeof(dragonVertices) / sizeof(GLfloat),
+        initialDragonVertices,
+        sizeof(initialDragonVertices) / sizeof(GLfloat),
         dragonWingIndices,
         sizeof(dragonWingIndices) / sizeof(GLuint)
     );
@@ -1285,7 +1428,7 @@ int main()
         sizeof(bossBodyIndices) / sizeof(GLuint)
     );
 
-    // Boss: ONE wing
+    // Boss wing
     bossWingMesh.create(
         bossVertices,
         sizeof(bossVertices) / sizeof(GLfloat),
@@ -1332,12 +1475,16 @@ int main()
         updateGame(deltaTime);
         renderGame();
 
+       
         std::string title =
             "Dragon: " + std::to_string(dragon.lives) +
-            "/5 | Obstacles: " +
-            std::to_string(obstaclesPassed) +
-            "/20 | Bosses defeated: " +
-            std::to_string(bossesDefeated);
+            "/5 | Score: " + std::to_string(score) +
+            " | High Score: " + std::to_string(loadHighScore()) +
+            " | Bosses defeated: " + std::to_string(bossesDefeated);
+
+        if (highScore) {
+            title += " | New High Score!";
+        }
 
         if (boss.active)
         {
@@ -1348,7 +1495,14 @@ int main()
         }
 
         if (gamePhase == GamePhase::GAME_OVER)
-            title += " | GAME OVER";
+        {
+            title += " | GAME OVER - PRESS R TO RESTART";
+
+            if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+            {
+                resetGame(); 
+            }
+        }
 
         glfwSetWindowTitle(
             window,

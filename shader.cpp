@@ -17,39 +17,51 @@ using namespace std;
 
 #include "shader.hpp"
 
-GLuint LoadShaders(const char * vertex_file_path,const char * fragment_file_path){
+// Funcție sigură de citire care curăță BOM-ul și caracterele de Windows (\r)
+std::string loadShaderSource(const char *file_path) {
+    std::ifstream file(file_path, std::ios::in | std::ios::binary);
+    if (!file.is_open()) {
+        printf("Impossible to open %s. Are you in the right directory?\n", file_path);
+        return "";
+    }
+
+    std::string content;
+    file.seekg(0, std::ios::end);
+    content.resize(file.tellg());
+    file.seekg(0, std::ios::beg);
+    file.read(&content[0], content.size());
+    file.close();
+
+    // Elimină UTF-8 BOM (\xEF\xBB\xBF) dacă există
+    if (content.size() >= 3 && 
+        (unsigned char)content[0] == 0xEF && 
+        (unsigned char)content[1] == 0xBB && 
+        (unsigned char)content[2] == 0xBF) {
+        content.erase(0, 3);
+    }
+
+    // Elimină complet caracterele carriage return '\r' (CRLF -> LF)
+    content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+
+    return content;
+}
+
+GLuint LoadShaders(const char * vertex_file_path, const char * fragment_file_path){
 
     // Create the shaders
     GLuint VertexShaderID = glCreateShader(GL_VERTEX_SHADER);
     GLuint FragmentShaderID = glCreateShader(GL_FRAGMENT_SHADER);
 
     // Read the Vertex Shader code from the file
-    std::string VertexShaderCode;
-    std::ifstream VertexShaderStream(vertex_file_path, std::ios::in);
-    if(VertexShaderStream.is_open()){
-        std::string Line = "";
-        while(getline(VertexShaderStream, Line))
-            VertexShaderCode += "\n" + Line;
-        VertexShaderStream.close();
-    }else{
-        printf("Impossible to open %s. Are you in the right directory ? Don't forget to read the FAQ !\n", vertex_file_path);
-        getchar();
-        return 0;
-    }
+    std::string VertexShaderCode = loadShaderSource(vertex_file_path);
+    if (VertexShaderCode.empty()) return 0;
 
     // Read the Fragment Shader code from the file
-    std::string FragmentShaderCode;
-    std::ifstream FragmentShaderStream(fragment_file_path, std::ios::in);
-    if(FragmentShaderStream.is_open()){
-        std::string Line = "";
-        while(getline(FragmentShaderStream, Line))
-            FragmentShaderCode += "\n" + Line;
-        FragmentShaderStream.close();
-    }
+    std::string FragmentShaderCode = loadShaderSource(fragment_file_path);
+    if (FragmentShaderCode.empty()) return 0;
 
     GLint Result = GL_FALSE;
     int InfoLogLength;
-
 
     // Compile Vertex Shader
     printf("Compiling shader : %s\n", vertex_file_path);

@@ -1,14 +1,8 @@
-#version 330 core
+#version 410 core
 
+out vec4 fragColor;
 uniform vec4 color;
 
-// Output data
-out vec4 fragCol;
-
-
-void main()
-{
-	// Output color from main
-	fragCol = color;
-
+void main(){
+    fragColor = color;
 }
